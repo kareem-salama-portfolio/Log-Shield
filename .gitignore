@@ -61,3 +61,6 @@ Desktop.ini
 *.tmp
 *.temp
 *.log
+
+!data/auth_sample.log
+!data/duplicate_check.log

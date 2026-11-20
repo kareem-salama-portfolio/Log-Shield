@@ -25,6 +25,8 @@ class RunResultsPanel(PanelCard):
         )
         self.selected_run: DetectionRunSummary | None = None
         self.incidents: list[DetectionIncident] = []
+        self._all_incidents: list[DetectionIncident] = []
+        self._high_only = False
 
         self.summary_label = QLabel("No detection run selected")
         self.summary_label.setObjectName("resultsSummary")
@@ -46,7 +48,9 @@ class RunResultsPanel(PanelCard):
         self.incidents_table.itemSelectionChanged.connect(self._handle_selection)
         self.content_layout.addWidget(self.incidents_table)
 
-        self.state_label = QLabel("Select a detection run to view its stored incidents.")
+        self.state_label = QLabel(
+            "Select a detection run to view its stored incidents."
+        )
         self.state_label.setObjectName("explorerEmptyState")
         self.state_label.setWordWrap(True)
         self.state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -57,15 +61,19 @@ class RunResultsPanel(PanelCard):
     def clear_selection(self) -> None:
         self.selected_run = None
         self.incidents = []
+        self._all_incidents = []
         self.summary_label.setText("No detection run selected")
         self.summary_label.setProperty("tone", "neutral")
         self.incidents_table.clearContents()
         self.incidents_table.setRowCount(0)
-        self._show_state("no_selection", "Select a detection run to view its stored incidents.")
+        self._show_state(
+            "no_selection", "Select a detection run to view its stored incidents."
+        )
 
     def set_loading(self, run: DetectionRunSummary) -> None:
         self.selected_run = run
         self.incidents = []
+        self._all_incidents = []
         self.incidents_table.clearContents()
         self.incidents_table.setRowCount(0)
         self.summary_label.setText(f"Run #{run['run_id']} · Loading stored results…")
@@ -75,6 +83,7 @@ class RunResultsPanel(PanelCard):
         if self.selected_run is None or self.selected_run["run_id"] != run_id:
             return
         self.incidents = []
+        self._all_incidents = []
         self.incidents_table.clearContents()
         self.incidents_table.setRowCount(0)
         self.summary_label.setText(f"Run #{run_id} · Results unavailable")
@@ -86,13 +95,19 @@ class RunResultsPanel(PanelCard):
             return False
         matching = [incident for incident in incidents if incident["run_id"] == run_id]
         if incidents and not matching:
-            self.set_error(run_id, "The detection service returned results for a different run.")
+            self.set_error(
+                run_id, "The detection service returned results for a different run."
+            )
             return False
 
-        self.incidents = matching
+        self._all_incidents = matching
+        visible = [
+            i for i in matching if not self._high_only or i["severity"] == "HIGH"
+        ]
+        self.incidents = visible
         self.incidents_table.clearContents()
-        self.incidents_table.setRowCount(len(matching))
-        for row, incident in enumerate(matching):
+        self.incidents_table.setRowCount(len(visible))
+        for row, incident in enumerate(visible):
             start = _format_datetime(incident["start_ts"], multiline=True)
             end = _format_datetime(incident["end_ts"], multiline=True)
             values = (
@@ -104,14 +119,16 @@ class RunResultsPanel(PanelCard):
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setToolTip(
-                    incident["start_ts"] if column == 1 else incident["end_ts"] if column == 2 else value
+                    incident["start_ts"]
+                    if column == 1
+                    else incident["end_ts"]
+                    if column == 2
+                    else value
                 )
                 item.setData(Qt.ItemDataRole.UserRole, incident["id"])
                 if column == 0:
                     item.setFont(QFont(Typography.MONOSPACE_FAMILY, Typography.SIZE_SM))
-                if column == 3:
-                    item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                elif column in (1, 2):
+                if column == 3 or column in (1, 2):
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.incidents_table.setItem(row, column, item)
 
@@ -131,14 +148,21 @@ class RunResultsPanel(PanelCard):
         )
         if summary["total_incidents"] == 0 and not matching:
             self._show_state("zero", "This run completed with zero incidents.")
-        elif matching:
+        elif visible:
             self._show_state("ready", "")
+        elif matching and self._high_only:
+            self._show_state("zero", "No HIGH incidents in this run.")
         else:
             self._show_state(
                 "error",
                 "The service reported incidents for this run but returned no matching incident records.",
             )
         return True
+
+    def set_high_only(self, enabled: bool) -> None:
+        self._high_only = enabled
+        if self.selected_run is not None:
+            self.set_results(self.selected_run["run_id"], self._all_incidents)
 
     def _show_state(self, state: str, message: str) -> None:
         self.state_label.setText(message)
@@ -158,7 +182,7 @@ class RunResultsPanel(PanelCard):
 
 def _format_datetime(value: str, *, multiline: bool = False) -> str:
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))  # noqa: FURB162 - accept Z timestamps on Python 3.11+
     except (AttributeError, ValueError):
         return value
     return parsed.strftime("%Y-%m-%d\n%H:%M" if multiline else "%Y-%m-%d %H:%M")

@@ -5,14 +5,16 @@ helper, not part of the desktop application's runtime path. It uses installed
 platform fonts so images reflect the supported Windows UI.
 """
 
-from pathlib import Path
+import os
 import sys
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_ROOT / "data" / "matplotlib"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFontDatabase
+from PySide6.QtWidgets import QApplication
 
 from app.ui.main_window import MainWindow
 from app.ui.screens.dashboard.data_provider import (
@@ -66,18 +68,26 @@ def _capture_detection(
         )
     elif state == "running":
         screen.set_detection_running()
-        window.statusBar().showMessage("Synthetic demonstration data · running-state layout preview")
+        window.statusBar().showMessage(
+            "Synthetic demonstration data · running-state layout preview"
+        )
     elif state == "zero":
         screen.select_run(2)
     elif state == "history-loading":
         screen.set_run_history_loading()
     elif state == "history-error":
-        screen.set_run_history_error("Detection service unavailable; run history could not be loaded.")
+        screen.set_run_history_error(
+            "Detection service unavailable; run history could not be loaded."
+        )
     elif state == "results-error":
         screen.select_run(3)
-        screen.set_selected_run_error(3, "Detection service could not return this run's results.")
+        screen.set_selected_run_error(
+            3, "Detection service could not return this run's results."
+        )
     elif state == "failure":
-        screen.set_detection_failed("Detection service returned an error. No run was created.")
+        screen.set_detection_failed(
+            "Detection service returned an error. No run was created."
+        )
 
     window.show()
     application.processEvents()
@@ -111,10 +121,22 @@ def _capture_incidents(
         screen.set_run_history([])
     elif state == "zero":
         screen.select_run(2)
-    elif state in {"selected-evidence", "no-evidence", "unsaved", "saving", "save-success", "save-failure", "compact-details"}:
-        screen.incidents_panel.incidents_table.selectRow(2 if state == "no-evidence" else 0)
+    elif state in {
+        "selected-evidence",
+        "no-evidence",
+        "unsaved",
+        "saving",
+        "save-success",
+        "save-failure",
+        "compact-details",
+    }:
+        screen.incidents_panel.incidents_table.selectRow(
+            2 if state == "no-evidence" else 0
+        )
         if state in {"unsaved", "saving", "save-success", "save-failure"}:
-            screen.editor_panel.note_editor.setPlainText("Visual review note — no persistence in this preview.")
+            screen.editor_panel.note_editor.setPlainText(
+                "Visual review note — no persistence in this preview."
+            )
         if state == "unsaved":
             prompt_unsaved = True
         elif state == "saving":
@@ -127,7 +149,9 @@ def _capture_incidents(
             updated["status"] = "REVIEWED"
             updated["note"] = screen.editor_panel.current_note
             screen.set_save_success(updated)
-            screen.editor_panel.state_message.setText("Visual-only success state; no review data was persisted.")
+            screen.editor_panel.state_message.setText(
+                "Visual-only success state; no review data was persisted."
+            )
         elif state == "save-failure":
             screen.editor_panel.save_changes()
     elif state == "exporting":
@@ -135,15 +159,28 @@ def _capture_incidents(
     elif state == "export-success":
         screen.export_panel.set_exporting("csv")
         screen.export_panel.set_export_success("logshield-run-3.csv")
-        screen.export_panel.state_message.setText("Visual-only success state; no file was created.")
+        screen.export_panel.state_message.setText(
+            "Visual-only success state; no file was created."
+        )
     elif state == "export-failure":
-        screen.export_panel.set_export_failure("Export service unavailable; no report was written.")
+        screen.export_panel.set_export_failure(
+            "Export service unavailable; no report was written."
+        )
     elif state == "service-unavailable":
-        window.statusBar().showMessage("Service-unavailable state preview · no backend services connected")
+        window.statusBar().showMessage(
+            "Service-unavailable state preview · no backend services connected"
+        )
 
     window.show()
     application.processEvents()
-    if state in {"compact-details", "selected-evidence", "no-evidence", "saving", "save-success", "save-failure"}:
+    if state in {
+        "compact-details",
+        "selected-evidence",
+        "no-evidence",
+        "saving",
+        "save-success",
+        "save-failure",
+    }:
         scrollbar = window.incidents_reports_scroll.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
         if state == "selected-evidence":
@@ -155,7 +192,11 @@ def _capture_incidents(
         application.processEvents()
     output_path = PROJECT_ROOT / "screenshots" / filename
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    preview = screen.unsaved_dialog.grab() if prompt_unsaved and screen.unsaved_dialog is not None else window.grab()
+    preview = (
+        screen.unsaved_dialog.grab()
+        if prompt_unsaved and screen.unsaved_dialog is not None
+        else window.grab()
+    )
     if not preview.save(str(output_path)):
         raise OSError(f"Could not save application screenshot: {output_path}")
     window.close()
@@ -193,7 +234,9 @@ def _capture_event_state(application: QApplication, filename: str, state: str) -
     elif state == "import-progress":
         screen.set_import_progress(58, "Parsing authentication log…")
     elif state == "import-failure":
-        screen.set_import_failed("Import service unavailable; the selected file was not imported.")
+        screen.set_import_failed(
+            "Import service unavailable; the selected file was not imported."
+        )
     elif state == "ip-details":
         screen.event_table.selectRow(0)
 
@@ -229,7 +272,9 @@ def _capture_event_compact_results(application: QApplication) -> Path:
     return output_path
 
 
-def _capture_regular_screen(application: QApplication, screen_id: str, filename: str) -> Path:
+def _capture_regular_screen(
+    application: QApplication, screen_id: str, filename: str
+) -> Path:
     """Capture a real empty-workspace service state without demo fixtures."""
     window = MainWindow(demo_mode=False)
     window.resize(1440, 900)
@@ -303,27 +348,61 @@ def main() -> None:
         _capture_incidents(application, "incidents-reports-demo.png", "demo"),
         _capture_incidents(application, "incidents-reports-no-runs.png", "no-runs"),
         _capture_incidents(application, "incidents-reports-zero-incidents.png", "zero"),
-        _capture_incidents(application, "incidents-reports-selected-evidence.png", "selected-evidence"),
-        _capture_incidents(application, "incidents-reports-no-linked-evidence.png", "no-evidence"),
-        _capture_incidents(application, "incidents-reports-unsaved-changes.png", "unsaved"),
+        _capture_incidents(
+            application, "incidents-reports-selected-evidence.png", "selected-evidence"
+        ),
+        _capture_incidents(
+            application, "incidents-reports-no-linked-evidence.png", "no-evidence"
+        ),
+        _capture_incidents(
+            application, "incidents-reports-unsaved-changes.png", "unsaved"
+        ),
         _capture_incidents(application, "incidents-reports-saving.png", "saving"),
-        _capture_incidents(application, "incidents-reports-save-success-preview.png", "save-success"),
-        _capture_incidents(application, "incidents-reports-save-failure.png", "save-failure"),
+        _capture_incidents(
+            application, "incidents-reports-save-success-preview.png", "save-success"
+        ),
+        _capture_incidents(
+            application, "incidents-reports-save-failure.png", "save-failure"
+        ),
         _capture_incidents(application, "incidents-reports-exporting.png", "exporting"),
-        _capture_incidents(application, "incidents-reports-export-success-preview.png", "export-success"),
-        _capture_incidents(application, "incidents-reports-export-failure.png", "export-failure"),
-        _capture_incidents(application, "incidents-reports-service-unavailable.png", "service-unavailable"),
-        _capture_incidents(application, "incidents-reports-compact.png", "selected-evidence", (900, 700)),
-        _capture_incidents(application, "incidents-reports-compact-details.png", "compact-details", (900, 700)),
+        _capture_incidents(
+            application,
+            "incidents-reports-export-success-preview.png",
+            "export-success",
+        ),
+        _capture_incidents(
+            application, "incidents-reports-export-failure.png", "export-failure"
+        ),
+        _capture_incidents(
+            application,
+            "incidents-reports-service-unavailable.png",
+            "service-unavailable",
+        ),
+        _capture_incidents(
+            application,
+            "incidents-reports-compact.png",
+            "selected-evidence",
+            (900, 700),
+        ),
+        _capture_incidents(
+            application,
+            "incidents-reports-compact-details.png",
+            "compact-details",
+            (900, 700),
+        ),
         _capture_malformed_dialog(application),
         _capture_event_state(application, "event-explorer-loading.png", "loading"),
         _capture_event_state(application, "event-explorer-error.png", "error"),
-        _capture_event_state(application, "event-import-progress.png", "import-progress"),
+        _capture_event_state(
+            application, "event-import-progress.png", "import-progress"
+        ),
         _capture_event_state(application, "event-import-failure.png", "import-failure"),
         _capture_event_state(application, "event-ip-details.png", "ip-details"),
         _capture_event_state(application, "focused-input.png", "focus"),
         _capture_event_compact_results(application),
-        _capture_detection(application, "detection-history-loading.png", "history-loading"),
+        _capture_detection(
+            application, "detection-history-loading.png", "history-loading"
+        ),
         _capture_detection(application, "detection-history-error.png", "history-error"),
         _capture_detection(application, "detection-results-error.png", "results-error"),
         _capture_detection(application, "detection-failure.png", "failure"),

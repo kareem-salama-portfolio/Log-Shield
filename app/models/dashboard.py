@@ -1,6 +1,6 @@
 """Plain data contract consumed by the Security Overview Dashboard."""
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 
 class FailedPerHourPoint(TypedDict):
@@ -14,6 +14,9 @@ class TopSourceIP(TypedDict):
 
 
 class IncidentSummary(TypedDict):
+    id: NotRequired[int]
+    run_id: NotRequired[int]
+    event_ids: NotRequired[list[int]]
     source_ip: str
     start_time: str
     end_time: str

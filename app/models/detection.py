@@ -34,6 +34,7 @@ class DetectionIncident(TypedDict):
     status: str
     note: str
     event_ids: list[int]
+    status_updated_at: NotRequired[str]
 
 
 class DetectionRunResult(TypedDict):

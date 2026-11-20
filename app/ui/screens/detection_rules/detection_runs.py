@@ -1,12 +1,11 @@
 """Detection Rules & Runs screen and service-facing UI signals."""
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QGridLayout, QVBoxLayout, QWidget
 
 from app.models.detection import (
     DetectionIncident,
     DetectionProgress,
-    DetectionRunRequest,
     DetectionRunResult,
     DetectionRunSummary,
 )
@@ -58,6 +57,7 @@ class DetectionRulesScreen(QWidget):
         root.addStretch(1)
 
         self.rule_settings.run_requested.connect(self.run_requested)
+        self.rule_settings.high_only_changed.connect(self.run_results.set_high_only)
         self.runs_panel.run_selected.connect(self._handle_run_selected)
         self.run_results.incident_selected.connect(self.incident_selected)
         self.set_run_history([])
@@ -69,7 +69,9 @@ class DetectionRulesScreen(QWidget):
     def selected_run_id(self) -> int | None:
         return self._selected_run["run_id"] if self._selected_run is not None else None
 
-    def set_event_availability(self, available: bool | None, error_message: str | None = None) -> None:
+    def set_event_availability(
+        self, available: bool | None, error_message: str | None = None
+    ) -> None:
         self.rule_settings.set_event_availability(available, error_message)
 
     def set_detection_service_available(
@@ -86,7 +88,11 @@ class DetectionRulesScreen(QWidget):
         self.runs_panel.set_runs(records)
         if self.selected_run_id is not None:
             selected = next(
-                (record for record in records if record["run_id"] == self.selected_run_id),
+                (
+                    record
+                    for record in records
+                    if record["run_id"] == self.selected_run_id
+                ),
                 None,
             )
             if selected is None:
@@ -132,7 +138,9 @@ class DetectionRulesScreen(QWidget):
         self.run_results.set_results(run["run_id"], result["incidents"])
         self.rule_settings.set_run_completed(run["run_id"], worker_active=worker_active)
 
-    def set_detection_failed(self, message: str, *, worker_active: bool = False) -> None:
+    def set_detection_failed(
+        self, message: str, *, worker_active: bool = False
+    ) -> None:
         self.rule_settings.set_run_failed(message, worker_active=worker_active)
 
     def set_detection_worker_finished(self) -> None:
@@ -143,7 +151,7 @@ class DetectionRulesScreen(QWidget):
         self.run_results.set_loading(run)
         self.run_results_requested.emit(run["run_id"])
 
-    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt event name
+    def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._update_responsive_layout()
 
@@ -152,7 +160,9 @@ class DetectionRulesScreen(QWidget):
         if mode == self._layout_mode:
             return
         self._layout_mode = mode
-        self.run_results.incidents_table.setMaximumHeight(310 if mode == self._COMPACT else 380)
+        self.run_results.incidents_table.setMaximumHeight(
+            310 if mode == self._COMPACT else 380
+        )
 
         self.top_grid.removeWidget(self.rule_settings)
         self.top_grid.removeWidget(self.runs_panel)

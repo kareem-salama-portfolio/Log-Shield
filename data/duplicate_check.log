@@ -1,0 +1,3 @@
+2026-10-04T08:00:00 sshd[1]: Failed password for admin from 192.0.2.10 port 2201
+2026-10-04T08:01:00 sshd[2]: Accepted password for admin from 192.0.2.10 port 2202
+intentionally malformed line

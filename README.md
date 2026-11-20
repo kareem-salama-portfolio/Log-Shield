@@ -1,84 +1,75 @@
 # LogShield
 
-LogShield is an offline desktop application foundation for analyzing local authentication logs, reviewing suspicious login activity, grouping detections into incidents, and exporting reports. It is built with Python, PySide6, SQLite, and Matplotlib.
-
-This repository contains the desktop shell, shared Burgundy and Rose glass design system, Security Overview Dashboard, Log Import & Event Explorer, Detection Rules & Runs, and Incidents & Reports. The production log parser, import/event services, persistence, detection algorithm, incident-review persistence, exact evidence lookup, and report export service are not connected yet.
+LogShield is an offline PySide6 desktop application for importing and analyzing local SSH authentication logs. It stores normalized events in SQLite, detects brute-force bursts with the specified per-IP sliding window, supports incident review, and exports CSV/JSON reports. All sample records are synthetic.
 
 ## Requirements
 
-- Python 3.11 or 3.12
-- A graphical desktop environment supported by Qt
+- Python 3.11 or 3.12 (64-bit)
+- PySide6
+- SQLite (included with Python)
+- Matplotlib
+- pytest for development
 
-SQLite is included with Python. Runtime package versions are listed in `requirements.txt`; pytest is included in `requirements-dev.txt`.
+Third-party versions are pinned in `requirements.txt` and `requirements-dev.txt`.
 
 ## Set up
 
-From the repository directory, create and activate a virtual environment in PowerShell:
+Windows PowerShell:
 
 ```powershell
-py -3.11 -m venv .venv
+py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements-dev.txt
 ```
 
-For Python 3.12, replace `py -3.11` with `py -3.12`.
+Use `py -3.11` if that is the team's selected version. macOS/Linux can create the environment with `python3.12 -m venv .venv` and activate `.venv` using the platform's shell command.
 
-On macOS or Linux, create and activate the environment with:
+## Generate the synthetic sample files
 
-```sh
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
+```powershell
+python scripts\generate_logs.py
 ```
+
+This creates `data/auth_sample.log` (over 1,000 lines across two days, attack bursts, a near miss, malformed records and the worked example) and `data/duplicate_check.log` for duplicate-import demonstration. Both are fictional and use documentation address ranges.
 
 ## Run
 
-With the virtual environment active, launch the desktop application:
-
-```sh
+```powershell
 python main.py
 ```
 
-The default launch uses an empty local workspace and displays “Import a log file to begin.” The import and detection screens report when their backend services are unavailable. File selection checks extension and size locally; without an ImportService it explicitly leaves the file unimported. To preview the implemented screens with isolated synthetic data, run:
+The database is created automatically at `data/logshield.db` on first launch. To rebuild it, close the application and remove that local database file; the next launch recreates the schema. `data/logshield.db` is local working data and is excluded from Git.
 
-```sh
-python main.py --demo-data
-```
+`python main.py --demo-data` opens the isolated synthetic UI preview. Demo history is read-only and is not written to the application database.
 
-On Windows, render review captures of the implemented screens, major dialogs, and key empty, loading, error, review, export, and compact states with:
+## Tests
 
 ```powershell
-python tools\capture_dashboard_previews.py
-```
-
-The PNG files are saved under `screenshots/`. The responsive review set covers 1440×900, 1280×800, 1024×768, and 900×700 logical pixels.
-
-## Run tests
-
-```sh
 python -m pytest
 ```
 
-## Project layout
+The tests cover the parser, sliding-window rules and boundaries, event isolation, imports and duplicates, persistence constraints, incident review, report export, and the four-screen UI.
 
-- `app/ui/` contains the desktop shell, presentation code, reusable widgets, screen packages, and visual theme.
-- `app/ui/styles/tokens.py` is the source for color, type, spacing, radius, and component style tokens.
-- `app/ui/widgets/` contains shared buttons, cards, navigation, severity badges, icons, and table styling.
-- `app/ui/screens/dashboard/` contains the Security Overview Dashboard, Matplotlib charts, and its temporary data adapter.
-- `app/ui/screens/log_import/` contains file controls, filters, import history, paged event table, IP details, malformed-record dialog, and an isolated demo adapter.
-- `app/ui/screens/detection_rules/` contains rule settings, run history, selected-run results, a Qt worker adapter, and an isolated synthetic history provider. It does not run detection logic.
-- `app/ui/screens/incidents_reports/` contains run-scoped incident review, linked evidence display, unsaved-change handling, and native CSV/JSON destination selection. Review saving, exact evidence lookup, and report creation remain service integration points.
-- `app/services/` is the boundary for application workflows exposed to the UI.
-- `app/services/ui_contracts.py` and `app/models/` define the import, event, and detection service boundaries and plain data fields. See `docs/architecture.md` for the missing Incidents & Reports service capabilities.
-- `app/algorithms/` will hold GUI-independent detection and analysis logic.
-- `app/models/` will hold application data structures.
-- `app/database/` will isolate SQLite connections, schema, and persistence operations.
-- `app/utils/` will contain small shared helpers without UI or persistence responsibilities.
-- `data/` is reserved for local runtime data and is ignored by Git.
-- `docs/architecture.md` records the dependency boundaries for future implementation.
-- `design-system/logshield/MASTER.md` records the UI/UX Pro Max-informed visual rules used by the dashboard.
-- `tests/` contains automated checks.
+## Application structure
 
-The HIGH severity option is visible for design continuity, but it is intentionally excluded from run requests until its operational meaning is confirmed by the backend and algorithm owners. The regular application launch never displays synthetic runs; `--demo-data` labels its history as synthetic and does not start a run.
+- `app/ui/`: the four primary screens and shared PySide6 components.
+- `app/services/`: import worker and application workflows; services contain no Qt widget code.
+- `app/algorithms/`: pure log parsing and per-IP sliding-window detection.
+- `app/database/schema.sql`: SQLite schema and constraints.
+- `app/database/connection.py`, `repositories.py`: connection lifecycle and parameterized persistence queries.
+- `app/models/`: plain service request/response contracts and domain records.
+- `scripts/generate_logs.py`: fixed-seed synthetic sample generation.
+
+## Required workflow scope
+
+The app supports local `.log`/`.txt` import up to 20 MB, SHA-256 duplicate prevention, malformed-line review, AND-combined paged event filters, per-IP summaries, threshold/window detection, persistent run history, incident evidence and review, a selected-run HIGH-only display filter, and CSV/JSON exports. Detection runs use thresholds 3–20 and windows 1–60 minutes. A same-IP successful login within the configured window after an incident raises severity to HIGH and is linked as evidence.
+
+The application performs offline defensive analysis only. It does not capture live traffic, connect to external services, or use real authentication data.
+
+## Submission documents
+
+- `docs/TNN_LOGSHIELD_technical.pdf` — four-page architecture, schema, algorithm, worked example, and verification notes.
+- `docs/TNN_LOGSHIELD_presentation.pdf` — six-slide live-demo presentation.
+- `screenshots/` — four-screen captures and responsive UI review states.
+

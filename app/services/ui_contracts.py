@@ -23,6 +23,7 @@ from app.models.log_import import (
     EventPage,
     ImportHistoryPage,
     ImportHistoryRecord,
+    ImportProgress,
     IPDetails,
     MalformedRecord,
 )
@@ -31,7 +32,11 @@ from app.models.log_import import (
 class ImportService(Protocol):
     """Import files, list import history, and retrieve parser diagnostics."""
 
-    def import_log_file(self, file_path: Path) -> ImportHistoryRecord: ...
+    def import_log_file(
+        self,
+        file_path: Path,
+        progress_callback: Callable[[ImportProgress], None] | None = None,
+    ) -> ImportHistoryRecord: ...
 
     def get_import_history(self, *, page: int, page_size: int) -> ImportHistoryPage: ...
 
@@ -51,6 +56,8 @@ class EventService(Protocol):
 
     def get_ip_details(self, source_ip: str) -> IPDetails | None: ...
 
+    def get_linked_events(self, event_ids: list[int]) -> list[dict]: ...
+
     def has_eligible_events(self) -> bool:
         """Return whether imported authentication events are eligible for detection."""
 
@@ -68,3 +75,9 @@ class DetectionService(Protocol):
     def get_run_history(self) -> list[DetectionRunSummary]: ...
 
     def get_run_results(self, run_id: int) -> list[DetectionIncident]: ...
+
+    def save_review(
+        self, run_id: int, incident_id: int, status: str, note: str
+    ) -> DetectionIncident: ...
+
+    def export_report(self, run_id: int, format_name: str, destination: str) -> str: ...

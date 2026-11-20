@@ -1,5 +1,6 @@
 """Qt worker adapter for detection service requests."""
 
+import logging
 from typing import Literal
 
 from PySide6.QtCore import QThread, Signal
@@ -11,6 +12,8 @@ from app.models.detection import (
 )
 from app.services.ui_contracts import DetectionService
 
+
+logger = logging.getLogger(__name__)
 
 DetectionOperation = Literal["history", "results", "run"]
 
@@ -49,7 +52,10 @@ class DetectionServiceWorker(QThread):
                 )
             else:
                 raise ValueError("Detection worker request is incomplete.")
-        except Exception as error:  # Service failures return to the UI as a clear state.
+        except (
+            Exception
+        ) as error:  # Service failures return to the UI as a clear state.
+            logger.exception("Detection service operation %s failed", self._operation)
             message = str(error).strip() or error.__class__.__name__
             self.request_failed.emit(self._operation, self._run_id, message)
         else:

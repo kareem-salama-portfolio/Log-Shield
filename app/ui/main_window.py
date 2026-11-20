@@ -1,17 +1,28 @@
 """Top-level LogShield window and navigation between implemented screens."""
 
+import logging
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QScrollArea, QStackedWidget, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QMainWindow,
+    QScrollArea,
+    QStackedWidget,
+    QWidget,
+)
 
 from app.models.dashboard import DashboardData
-from app.models.detection import DetectionRunRequest, DetectionRunResult
+from app.models.detection import DetectionRunRequest
 from app.models.log_import import EventFilters
-from app.services.ui_contracts import DetectionService, EventService
+from app.services.import_worker import ImportWorker
+from app.services.ui_contracts import DetectionService, EventService, ImportService
 from app.ui.navigation import PRIMARY_SCREENS
 from app.ui.screens.dashboard.dashboard import Dashboard
-from app.ui.screens.dashboard.data_provider import get_demo_dashboard_data, get_empty_dashboard_data
+from app.ui.screens.dashboard.data_provider import (
+    get_demo_dashboard_data,
+    get_empty_dashboard_data,
+)
 from app.ui.screens.detection_rules.data_provider import (
     demo_has_eligible_events,
     get_demo_detection_runs,
@@ -22,6 +33,8 @@ from app.ui.screens.detection_rules.run_worker import (
     DetectionOperation,
     DetectionServiceWorker,
 )
+from app.ui.screens.incidents_reports.data_provider import get_demo_incident_evidence
+from app.ui.screens.incidents_reports.incidents_reports import IncidentsReportsScreen
 from app.ui.screens.log_import.data_provider import (
     get_demo_event_page,
     get_demo_import_history,
@@ -31,11 +44,10 @@ from app.ui.screens.log_import.data_provider import (
     get_empty_import_history,
 )
 from app.ui.screens.log_import.event_explorer import EventExplorer
-from app.ui.screens.incidents_reports.data_provider import get_demo_incident_evidence
-from app.ui.screens.incidents_reports.incidents_reports import IncidentsReportsScreen
 from app.ui.styles.tokens import Spacing
 from app.ui.widgets.sidebar import Sidebar
 
+logger = logging.getLogger(__name__)
 
 _ORPHANED_DETECTION_WORKERS: set[DetectionServiceWorker] = set()
 
@@ -49,6 +61,8 @@ class MainWindow(QMainWindow):
         demo_mode: bool = False,
         event_service: EventService | None = None,
         detection_service: DetectionService | None = None,
+        import_service: ImportService | None = None,
+        dashboard_service: object | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("LogShield — Security Overview")
@@ -57,6 +71,9 @@ class MainWindow(QMainWindow):
         self.demo_mode = demo_mode
         self.event_service = event_service
         self.detection_service = detection_service
+        self.import_service = import_service
+        self.dashboard_service = dashboard_service
+        self._import_worker = None
         self._detection_worker: DetectionServiceWorker | None = None
         self._active_detection_workers: set[DetectionServiceWorker] = set()
 
@@ -72,36 +89,54 @@ class MainWindow(QMainWindow):
             initial_dashboard_data = (
                 get_demo_dashboard_data() if demo_mode else get_empty_dashboard_data()
             )
-        self.dashboard = Dashboard(initial_dashboard_data, demo_mode=demo_mode, parent=central)
+        self.dashboard = Dashboard(
+            initial_dashboard_data, demo_mode=demo_mode, parent=central
+        )
         self.dashboard_scroll = QScrollArea(central)
         self.dashboard_scroll.setObjectName("dashboardScroll")
         self.dashboard_scroll.setWidgetResizable(True)
-        self.dashboard_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.dashboard_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.dashboard_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.dashboard_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self.dashboard_scroll.setWidget(self.dashboard)
 
         self.event_explorer = EventExplorer()
         self.event_explorer_scroll = QScrollArea(central)
         self.event_explorer_scroll.setObjectName("eventExplorerScroll")
         self.event_explorer_scroll.setWidgetResizable(True)
-        self.event_explorer_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.event_explorer_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.event_explorer_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.event_explorer_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self.event_explorer_scroll.setWidget(self.event_explorer)
 
         self.detection_rules = DetectionRulesScreen()
         self.detection_rules_scroll = QScrollArea(central)
         self.detection_rules_scroll.setObjectName("detectionRulesScroll")
         self.detection_rules_scroll.setWidgetResizable(True)
-        self.detection_rules_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.detection_rules_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.detection_rules_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.detection_rules_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self.detection_rules_scroll.setWidget(self.detection_rules)
 
         self.incidents_reports = IncidentsReportsScreen(demo_mode=demo_mode)
         self.incidents_reports_scroll = QScrollArea(central)
         self.incidents_reports_scroll.setObjectName("incidentsReportsScroll")
         self.incidents_reports_scroll.setWidgetResizable(True)
-        self.incidents_reports_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.incidents_reports_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.incidents_reports_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.incidents_reports_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
         self.incidents_reports_scroll.setWidget(self.incidents_reports)
 
         self.screen_stack = QStackedWidget(central)
@@ -116,16 +151,28 @@ class MainWindow(QMainWindow):
         self._screen_labels = dict(PRIMARY_SCREENS)
         self.sidebar.navigation_requested.connect(self._handle_navigation_request)
         self.dashboard.navigation_requested.connect(self._handle_navigation_request)
-        self.dashboard.incident_open_requested.connect(self._handle_incident_open_request)
+        self.dashboard.incident_open_requested.connect(
+            self._handle_incident_open_request
+        )
         self.event_explorer.import_requested.connect(self._handle_import_request)
         self.event_explorer.events_requested.connect(self._handle_events_request)
-        self.event_explorer.ip_details_requested.connect(self._handle_ip_details_request)
-        self.event_explorer.malformed_records_requested.connect(self._handle_malformed_records_request)
+        self.event_explorer.ip_details_requested.connect(
+            self._handle_ip_details_request
+        )
+        self.event_explorer.malformed_records_requested.connect(
+            self._handle_malformed_records_request
+        )
         self.detection_rules.run_requested.connect(self._handle_detection_run_request)
-        self.detection_rules.run_results_requested.connect(self._handle_run_results_request)
-        self.detection_rules.incident_selected.connect(self._handle_detection_incident_open_request)
+        self.detection_rules.run_results_requested.connect(
+            self._handle_run_results_request
+        )
+        self.detection_rules.incident_selected.connect(
+            self._handle_detection_incident_open_request
+        )
         self.incidents_reports.run_selected.connect(self._handle_incident_run_selected)
-        self.incidents_reports.evidence_requested.connect(self._handle_incident_evidence_requested)
+        self.incidents_reports.evidence_requested.connect(
+            self._handle_incident_evidence_requested
+        )
         self.incidents_reports.save_requested.connect(self._handle_incident_review_save)
         self.incidents_reports.export_requested.connect(self._handle_incident_export)
         self.incidents_reports.navigation_allowed.connect(self._activate_screen)
@@ -185,40 +232,101 @@ class MainWindow(QMainWindow):
             return
         label = self._screen_labels.get(screen_id)
         if label is None:
-            self.statusBar().showMessage("This navigation destination is unavailable.", 4500)
+            self.statusBar().showMessage(
+                "This navigation destination is unavailable.", 4500
+            )
             return
-        self.statusBar().showMessage(f"{label} will be available in a future task.", 4500)
-
-    def _handle_import_request(self, file_path: str) -> None:
         self.statusBar().showMessage(
-            f"No import service is connected. {Path(file_path).name} passed local checks but was not imported.",
-            7000,
+            f"{label} will be available in a future task.", 4500
         )
 
-    def _handle_events_request(self, filters: EventFilters, page: int, page_size: int) -> None:
+    def _handle_import_request(self, file_path: str) -> None:
+        if self.import_service is None:
+            self.statusBar().showMessage("Import service is unavailable.", 6000)
+            return
+        if self._import_worker is not None and self._import_worker.isRunning():
+            return
+        self.event_explorer.import_panel.set_importing(Path(file_path).name)
+        worker = ImportWorker(self.import_service, file_path)
+        self._import_worker = worker
+        worker.progress.connect(self._handle_import_progress)
+        worker.completed.connect(self._handle_import_completed)
+        worker.failed.connect(self._handle_import_failed)
+        worker.finished.connect(lambda: setattr(self, "_import_worker", None))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _handle_import_progress(self, progress: object) -> None:
+        if isinstance(progress, dict):
+            self.event_explorer.set_import_progress(
+                int(progress.get("percentage", 0)),
+                str(progress.get("status", "Import in progress…")),
+            )
+
+    def _handle_import_completed(self, record: object) -> None:
+        self.event_explorer.set_import_result(record)
+        self.event_explorer.set_import_history(
+            self.import_service.get_import_history(page=1, page_size=50)["items"]
+        )
+        self._refresh_database_views()
+        self.statusBar().showMessage("Log file imported successfully.", 5000)
+
+    def _handle_import_failed(self, message: str) -> None:
+        self.event_explorer.set_import_failed(message)
+        self.statusBar().showMessage(f"Import failed: {message}", 7000)
+
+    def _refresh_database_views(self) -> None:
+        if self.event_service is None:
+            return
+        self.event_explorer.set_events_page(
+            self.event_service.get_events(_empty_filters(), page=1, page_size=200)
+        )
+        if self.detection_service is not None:
+            self.detection_rules.set_event_availability(
+                self.event_service.has_eligible_events()
+            )
+        self._refresh_dashboard()
+
+    def _refresh_dashboard(self) -> None:
+        dashboard_service = self.dashboard_service
+        if dashboard_service is not None:
+            self.dashboard.update_data(dashboard_service.dashboard())
+
+    def _handle_events_request(
+        self, filters: EventFilters, page: int, page_size: int
+    ) -> None:
         if self.demo_mode:
             self.event_explorer.set_events_page(
                 get_demo_event_page(filters, page=page, page_size=page_size)
             )
             return
-        self.event_explorer.set_events_error(
-            "Event service is not connected. No query was run and no local event filtering was performed."
-        )
+        if self.event_service is not None:
+            self.event_explorer.set_events_page(
+                self.event_service.get_events(filters, page=page, page_size=page_size)
+            )
+        else:
+            self.event_explorer.set_events_error("Event service is not connected.")
 
     def _handle_ip_details_request(self, source_ip: str) -> None:
         if self.demo_mode:
             self.event_explorer.set_ip_details(get_demo_ip_details(source_ip))
             return
-        self.event_explorer.set_ip_details_unavailable(source_ip)
+        if self.event_service is not None:
+            self.event_explorer.set_ip_details(
+                self.event_service.get_ip_details(source_ip)
+            )
+        else:
+            self.event_explorer.set_ip_details_unavailable(source_ip)
 
     def _handle_malformed_records_request(self, import_id: int) -> None:
         if self.demo_mode:
             records = get_demo_malformed_records(import_id)
             history = {
-                record["import_id"]: record
-                for record in get_demo_import_history()
+                record["import_id"]: record for record in get_demo_import_history()
             }
-            total_count = history.get(import_id, {}).get("malformed_records", len(records))
+            total_count = history.get(import_id, {}).get(
+                "malformed_records", len(records)
+            )
             self.event_explorer.show_malformed_records(records, total_count)
             return
         self.statusBar().showMessage(
@@ -229,7 +337,9 @@ class MainWindow(QMainWindow):
     def _handle_incident_open_request(self, incident: object) -> None:
         """Open a dashboard summary in the reports screen without inventing IDs."""
         self._activate_screen("incidents_reports")
-        if isinstance(incident, dict) and {"id", "run_id", "event_ids"}.issubset(incident):
+        if isinstance(incident, dict) and {"id", "run_id", "event_ids"}.issubset(
+            incident
+        ):
             self._handle_detection_incident_open_request(incident)
             return
         self.statusBar().showMessage(
@@ -259,6 +369,7 @@ class MainWindow(QMainWindow):
                     self.event_service.has_eligible_events()
                 )
             except Exception as error:
+                logger.exception("Could not check detection readiness")
                 self.detection_rules.set_event_availability(
                     None,
                     f"Eligible events could not be checked: {_exception_message(error)}",
@@ -326,8 +437,14 @@ class MainWindow(QMainWindow):
         worker.request_completed.connect(self._handle_detection_service_response)
         worker.request_failed.connect(self._handle_detection_service_error)
         if operation == "run":
-            worker.progress_received.connect(self.detection_rules.set_detection_progress)
-        worker.finished.connect(lambda active_worker=worker: self._handle_detection_worker_finished(active_worker))
+            worker.progress_received.connect(
+                self.detection_rules.set_detection_progress
+            )
+        worker.finished.connect(
+            lambda active_worker=worker: self._handle_detection_worker_finished(
+                active_worker
+            )
+        )
         worker.finished.connect(worker.deleteLater)
         worker.start()
         return worker
@@ -347,7 +464,10 @@ class MainWindow(QMainWindow):
         elif operation == "run":
             run_result = result
             self.detection_rules.set_detection_completed(run_result, worker_active=True)
-            self.incidents_reports.set_run_history(self.detection_rules.runs_panel.records)
+            self.incidents_reports.set_run_history(
+                self.detection_rules.runs_panel.records
+            )
+            self._refresh_dashboard()
             self.statusBar().showMessage(
                 f"Run #{run_result['run']['run_id']} completed and stored.", 5000
             )
@@ -401,15 +521,23 @@ class MainWindow(QMainWindow):
 
     def _handle_detection_incident_open_request(self, incident: object) -> None:
         if not isinstance(incident, dict) or not {"id", "run_id"}.issubset(incident):
-            self.statusBar().showMessage("The selected item does not include an incident ID and run ID.", 5000)
+            self.statusBar().showMessage(
+                "The selected item does not include an incident ID and run ID.", 5000
+            )
             return
         run_id = incident["run_id"]
         run = next(
-            (record for record in self.detection_rules.runs_panel.records if record["run_id"] == run_id),
+            (
+                record
+                for record in self.detection_rules.runs_panel.records
+                if record["run_id"] == run_id
+            ),
             None,
         )
         if run is None:
-            self.statusBar().showMessage(f"Run #{run_id} is not available in the current run history.", 5000)
+            self.statusBar().showMessage(
+                f"Run #{run_id} is not available in the current run history.", 5000
+            )
             return
         incidents = (
             self.detection_rules.run_results.incidents
@@ -417,7 +545,9 @@ class MainWindow(QMainWindow):
             and self.detection_rules.run_results.selected_run["run_id"] == run_id
             else []
         )
-        selected = next((item for item in incidents if item["id"] == incident["id"]), None)
+        selected = next(
+            (item for item in incidents if item["id"] == incident["id"]), None
+        )
         if selected is None:
             self.statusBar().showMessage(
                 f"Incident #{incident['id']} is not present in the loaded results for run #{run_id}.",
@@ -430,7 +560,9 @@ class MainWindow(QMainWindow):
             incidents,
             selected,
         ):
-            self.statusBar().showMessage("The selected incident could not be opened for this run.", 5000)
+            self.statusBar().showMessage(
+                "The selected incident could not be opened for this run.", 5000
+            )
             return
         self._activate_screen("incidents_reports")
         self.statusBar().showMessage(
@@ -457,9 +589,15 @@ class MainWindow(QMainWindow):
         event_ids: object,
     ) -> None:
         incident = self.incidents_reports.selected_incident
-        if incident is None or (incident["run_id"], incident["id"]) != (run_id, incident_id):
+        if incident is None or (incident["run_id"], incident["id"]) != (
+            run_id,
+            incident_id,
+        ):
             return
-        if not isinstance(event_ids, (list, tuple)) or list(event_ids) != incident["event_ids"]:
+        if (
+            not isinstance(event_ids, (list, tuple))
+            or list(event_ids) != incident["event_ids"]
+        ):
             self.incidents_reports.set_evidence_unavailable(
                 run_id,
                 incident_id,
@@ -473,11 +611,16 @@ class MainWindow(QMainWindow):
                 get_demo_incident_evidence(incident),
             )
             return
-        detail = (
-            "Exact linked-event lookup is unavailable: EventService has paged event queries, "
-            "but no lookup by incident event IDs."
-        )
-        self.incidents_reports.set_evidence_unavailable(run_id, incident_id, detail)
+        if self.event_service is not None:
+            self.incidents_reports.set_evidence(
+                run_id,
+                incident_id,
+                self.event_service.get_linked_events(list(event_ids)),
+            )
+        else:
+            self.incidents_reports.set_evidence_unavailable(
+                run_id, incident_id, "Event service is unavailable."
+            )
 
     def _handle_incident_review_save(
         self,
@@ -486,26 +629,69 @@ class MainWindow(QMainWindow):
         status: str,
         note: str,
     ) -> None:
-        self.incidents_reports.set_save_failure(
-            "Incident review persistence is unavailable. No review changes were saved.",
-            incident_id,
-            run_id,
-        )
+        if self.demo_mode:
+            self.incidents_reports.set_save_failure(
+                "Synthetic demonstration data is read-only. No review changes were saved.",
+                incident_id,
+                run_id,
+            )
+            return
+        if self.detection_service is None:
+            self.incidents_reports.set_save_failure(
+                "Incident review persistence is unavailable. No review changes were saved.",
+                incident_id,
+                run_id,
+            )
+            return
+        try:
+            updated = self.detection_service.save_review(
+                run_id, incident_id, status, note
+            )
+            self.incidents_reports.set_save_success(updated)
+            self._refresh_dashboard()
+        except Exception as error:
+            logger.exception(
+                "Incident review save failed for run %s, incident %s",
+                run_id,
+                incident_id,
+            )
+            self.incidents_reports.set_save_failure(str(error), incident_id, run_id)
 
-    def _handle_incident_export(self, run_id: int, export_format: str, path: str) -> None:
-        self.incidents_reports.set_export_failure(
-            "Report export service is unavailable. No report was written.",
-            run_id,
-        )
+    def _handle_incident_export(
+        self, run_id: int, export_format: str, path: str
+    ) -> None:
+        if self.demo_mode:
+            self.incidents_reports.set_export_failure(
+                "Synthetic demonstration history is read-only. No report was written.",
+                run_id,
+            )
+            return
+        if self.detection_service is None:
+            self.incidents_reports.set_export_failure(
+                "Export service unavailable; no file was written.", run_id
+            )
+            return
+        try:
+            exported_path = self.detection_service.export_report(
+                run_id, export_format, path
+            )
+            self.incidents_reports.set_export_success(exported_path, run_id)
+        except Exception as error:
+            logger.exception("Report export failed for run %s", run_id)
+            self.incidents_reports.set_export_failure(str(error), run_id)
 
-    def closeEvent(self, event) -> None:  # noqa: N802 - Qt event name
+    def closeEvent(self, event) -> None:
         for worker in tuple(self._active_detection_workers):
             if worker.isRunning():
-                worker.request_completed.disconnect(self._handle_detection_service_response)
+                worker.request_completed.disconnect(
+                    self._handle_detection_service_response
+                )
                 worker.request_failed.disconnect(self._handle_detection_service_error)
                 _ORPHANED_DETECTION_WORKERS.add(worker)
                 worker.finished.connect(
-                    lambda active_worker=worker: _ORPHANED_DETECTION_WORKERS.discard(active_worker)
+                    lambda active_worker=worker: _ORPHANED_DETECTION_WORKERS.discard(
+                        active_worker
+                    )
                 )
         self._active_detection_workers.clear()
         self._detection_worker = None

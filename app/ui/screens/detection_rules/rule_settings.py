@@ -21,6 +21,7 @@ class RuleSettingsPanel(PanelCard):
     """Collect the agreed run parameters and display service operation state."""
 
     run_requested = Signal(object)
+    high_only_changed = Signal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(
@@ -35,7 +36,12 @@ class RuleSettingsPanel(PanelCard):
         self._is_running = False
 
         self.failure_threshold = _numeric_input(
-            "failureThresholdInput", 3, 20, 5, " failures", "Failure Threshold, 3 to 20 failed attempts"
+            "failureThresholdInput",
+            3,
+            20,
+            5,
+            " failures",
+            "Failure Threshold, 3 to 20 failed attempts",
         )
         self.time_window = _numeric_input(
             "timeWindowInput", 1, 60, 10, " min", "Time Window, 1 to 60 minutes"
@@ -70,14 +76,17 @@ class RuleSettingsPanel(PanelCard):
         high_row = QVBoxLayout()
         high_row.setContentsMargins(0, Spacing.SM, 0, 0)
         high_row.setSpacing(Spacing.XXS)
-        self.high_severity_toggle = QCheckBox("HIGH severity option")
+        self.high_severity_toggle = QCheckBox("Show HIGH incidents only")
         self.high_severity_toggle.setObjectName("highSeverityToggle")
-        self.high_severity_toggle.setAccessibleName("HIGH severity option; backend meaning not confirmed")
-        self.high_severity_toggle.setToolTip(
-            "This control is not included in detection requests until its backend meaning is confirmed."
+        self.high_severity_toggle.setAccessibleName(
+            "Show only HIGH severity incidents in the selected run"
         )
+        self.high_severity_toggle.setToolTip(
+            "Filter the selected run's incident results to HIGH severity. Detection parameters are unchanged."
+        )
+        self.high_severity_toggle.toggled.connect(self.high_only_changed.emit)
         self.high_severity_hint = QLabel(
-            "Its operational meaning is pending backend confirmation; this value is not sent with a run request."
+            "Filters the selected run's displayed incidents; all incidents remain stored in the run."
         )
         self.high_severity_hint.setObjectName("fieldHint")
         self.high_severity_hint.setWordWrap(True)
@@ -210,7 +219,10 @@ class RuleSettingsPanel(PanelCard):
             message = "Event service unavailable. Import authentication logs before running detection."
             badge, tone = "UNAVAILABLE", "error"
         elif not self._detection_service_available:
-            message = self._detection_service_error or "Detection service unavailable. No run was started."
+            message = (
+                self._detection_service_error
+                or "Detection service unavailable. No run was started."
+            )
             badge, tone = "UNAVAILABLE", "error"
         else:
             message = "Eligible authentication events are available."
